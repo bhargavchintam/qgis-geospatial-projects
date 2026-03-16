@@ -1,0 +1,65 @@
+##############################################
+# Crop Health Monitoring Configuration
+##############################################
+
+study_area:
+  name: "Story County, Iowa"
+  crs: "EPSG:32615"  # UTM Zone 15N
+  field_boundaries: "data/field_boundaries.geojson"
+  crop_type: "corn"
+
+sentinel:
+  platform: "Sentinel-2"
+  product_type: "S2MSI2A"  # Level-2A atmospherically corrected
+  cloud_cover_max: 15
+  bands:
+    blue: "B02"        # 490nm, 10m
+    green: "B03"       # 560nm, 10m
+    red: "B04"         # 665nm, 10m
+    red_edge1: "B05"   # 705nm, 20m
+    red_edge2: "B06"   # 740nm, 20m
+    red_edge3: "B07"   # 783nm, 20m
+    nir: "B08"         # 842nm, 10m
+    nir_narrow: "B8A"  # 865nm, 20m
+    swir1: "B11"       # 1610nm, 20m
+    swir2: "B12"       # 2190nm, 20m
+  # Scale factor for L2A reflectance (DN / 10000 = reflectance)
+  scale_factor: 10000
+
+growing_season:
+  start: "2024-04-01"
+  end: "2024-10-31"
+  compositing_interval_days: 16  # Sentinel-2 revisit interval
+  phenology_stages:
+    - {name: "Planting", start: "04-01", end: "05-15"}
+    - {name: "Vegetative", start: "05-15", end: "07-01"}
+    - {name: "Reproductive", start: "07-01", end: "08-15"}
+    - {name: "Maturity", start: "08-15", end: "10-01"}
+    - {name: "Harvest", start: "10-01", end: "10-31"}
+
+indices:
+  compute: ["ndvi", "evi", "savi", "ndre", "ndwi"]
+  savi_L: 0.5  # Soil adjustment factor
+
+anomaly:
+  method: "z_score"  # Options: z_score, isolation_forest, lof
+  z_score_threshold: -1.5
+  isolation_forest:
+    contamination: 0.05
+    n_estimators: 100
+  min_cluster_ha: 0.5
+  temporal_window: 3  # number of scenes for baseline
+
+classification:
+  health_classes:
+    excellent: {min: 0.75, max: 1.0, color: "#006400"}
+    good: {min: 0.55, max: 0.75, color: "#32CD32"}
+    moderate: {min: 0.35, max: 0.55, color: "#FFD700"}
+    poor: {min: 0.20, max: 0.35, color: "#FF8C00"}
+    very_poor: {min: 0.0, max: 0.20, color: "#DC143C"}
+
+output:
+  directory: "results"
+  formats: ["GeoTIFF", "GeoPackage", "PNG", "CSV"]
+  dpi: 300
+  time_series_plots: true

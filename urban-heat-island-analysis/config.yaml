@@ -1,0 +1,55 @@
+##############################################
+# Urban Heat Island Analysis Configuration
+##############################################
+
+study_area:
+  name: "Phoenix Metropolitan Area"
+  bbox: [-112.45, 33.20, -111.60, 33.85]  # [west, south, east, north]
+  crs: "EPSG:32612"  # UTM Zone 12N
+  boundary_file: "data/study_area_boundary.gpkg"
+
+landsat:
+  collection: 2
+  level: "L2SP"
+  sensor: "OLI_TIRS"   # Landsat 8/9
+  bands: ["B4", "B5", "B10"]
+  cloud_cover_max: 10
+  date_range:
+    start: "2024-06-01"
+    end: "2024-08-31"
+  # Calibration constants for Landsat 9 Band 10
+  constants:
+    K1: 799.0284
+    K2: 1329.2405
+    wavelength: 10.895  # micrometers
+
+ndvi:
+  soil_threshold: 0.2
+  vegetation_threshold: 0.5
+
+emissivity:
+  soil: 0.966
+  vegetation: 0.973
+  offset: 0.986
+  slope: 0.004
+
+classification:
+  method: "standard_deviation"
+  uhi_thresholds:
+    extreme: 2.0     # mean + 2σ
+    strong: 1.5      # mean + 1.5σ
+    moderate: 1.0    # mean + 1σ
+    mild: 0.5        # mean + 0.5σ
+
+mitigation:
+  weights:
+    thermal_anomaly: 0.40
+    population_density: 0.35
+    green_space_deficit: 0.25
+  population_raster: "data/population_density.tif"
+  greenspace_vector: "data/parks_greenspace.gpkg"
+
+output:
+  directory: "results"
+  formats: ["GeoTIFF", "GeoPackage", "PNG"]
+  dpi: 300

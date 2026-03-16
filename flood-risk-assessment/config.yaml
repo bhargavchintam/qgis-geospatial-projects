@@ -1,0 +1,89 @@
+##############################################
+# Multi-Criteria Flood Risk Assessment Config
+##############################################
+
+study_area:
+  name: "Harris County, TX"
+  crs: "EPSG:32615"  # UTM Zone 15N
+  boundary: "data/harris_county.gpkg"
+
+dem:
+  source: "data/dem_10m.tif"
+  resolution: 10  # meters
+  fill_method: "wang_liu"  # Options: wang_liu, planchon_darboux
+
+stream_network:
+  accumulation_threshold: 1000  # cells
+  buffer_distances: [100, 250, 500, 1000, 2000]  # meters
+
+ahp:
+  # Pairwise comparison matrix (Saaty scale 1-9)
+  # Order: TWI, Slope, River Distance, Rainfall, Elevation, Soil Perm, LULC
+  pairwise_matrix:
+    - [1,    2,    2,    3,    3,    4,    5]
+    - [0.5,  1,    1,    2,    2,    3,    4]
+    - [0.5,  1,    1,    1,    2,    2,    3]
+    - [0.33, 0.5,  1,    1,    1,    2,    2]
+    - [0.33, 0.5,  0.5,  1,    1,    1,    2]
+    - [0.25, 0.33, 0.5,  0.5,  1,    1,    1]
+    - [0.2,  0.25, 0.33, 0.5,  0.5,  1,    1]
+  criteria_names:
+    - "twi"
+    - "slope"
+    - "river_distance"
+    - "rainfall"
+    - "elevation"
+    - "soil_permeability"
+    - "lulc"
+  consistency_threshold: 0.10
+
+susceptibility:
+  classification:
+    very_high: 0.8
+    high: 0.6
+    moderate: 0.4
+    low: 0.2
+
+  # Reclassification schemes for each criterion
+  reclassification:
+    slope:  # degrees → susceptibility score
+      - {range: [0, 2], score: 5}
+      - {range: [2, 5], score: 4}
+      - {range: [5, 10], score: 3}
+      - {range: [10, 20], score: 2}
+      - {range: [20, 90], score: 1}
+
+    elevation:  # meters above sea level
+      - {range: [0, 10], score: 5}
+      - {range: [10, 25], score: 4}
+      - {range: [25, 50], score: 3}
+      - {range: [50, 100], score: 2}
+      - {range: [100, 9999], score: 1}
+
+    river_distance:  # meters from river network
+      - {range: [0, 100], score: 5}
+      - {range: [100, 250], score: 4}
+      - {range: [250, 500], score: 3}
+      - {range: [500, 1000], score: 2}
+      - {range: [1000, 99999], score: 1}
+
+vulnerability:
+  weights:
+    population_density: 0.40
+    critical_infrastructure: 0.35
+    socioeconomic_index: 0.25
+
+scenarios:
+  return_periods: [10, 50, 100, 500]
+  rainfall_source: "NOAA Atlas 14"
+  # Scale factors for different return periods (relative to 100-yr)
+  return_period_factors:
+    10: 0.65
+    50: 0.88
+    100: 1.00
+    500: 1.25
+
+output:
+  directory: "results"
+  formats: ["GeoTIFF", "GeoPackage", "PNG"]
+  dpi: 300
