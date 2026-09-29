@@ -1,29 +1,32 @@
 #!/usr/bin/env python3
 """
-Flood Risk Assessment — Full Pipeline Runner
+Flood Risk Assessment: full pipeline runner for real (or demo) data.
+
+Reads the input layer paths from config.yaml (dem.source + inputs.*),
+runs src.pipeline.run_pipeline and writes rasters, vectors and a JSON
+report. To run on your own data, edit the paths in config.yaml.
 
 Usage:
-    python scripts/run_pipeline.py --config config.yaml --output results/
+    python scripts/run_pipeline.py --config config.yaml --output results/run
+    python scripts/run_pipeline.py --figures   # also write figures + web map
 """
 
 import argparse
+import json
 import logging
 import sys
-import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_DIR))
 
-from src.dem_processor import DEMProcessor
-from src.flood_susceptibility import FloodSusceptibility
-from src.vulnerability import VulnerabilityAssessor
-from src.risk_calculator import RiskCalculator
-from src.utils import ensure_directory, load_config
+from src.pipeline import run_pipeline  # noqa: E402
+from src.utils import ensure_directory, load_config  # noqa: E402
 
 
-def setup_logging(output_dir: str) -> None:
-    log_dir = ensure_directory(Path(output_dir) / "logs")
+def setup_logging(output_dir: Path) -> None:
+    log_dir = ensure_directory(output_dir / "logs")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     logging.basicConfig(
         level=logging.INFO,
@@ -35,135 +38,69 @@ def setup_logging(output_dir: str) -> None:
     )
 
 
-def run_pipeline(config_path: str, output_dir: str) -> dict:
-    logger = logging.getLogger("pipeline")
-    config = load_config(config_path)
+def inputs_from_config(config: dict, base_dir: Path) -> dict:
+    """Resolve the layer paths in config.yaml relative to the project folder."""
+    def resolve(p):
+        p = Path(p)
+        return str(p if p.is_absolute() else base_dir / p)
 
-    output_dir = ensure_directory(output_dir)
-    raster_dir = ensure_directory(output_dir / "rasters")
-    vector_dir = ensure_directory(output_dir / "vectors")
-    stats_dir = ensure_directory(output_dir / "statistics")
-
-    results = {"timestamp": datetime.now().isoformat()}
-
-    # ─── Step 1: DEM Hydrological Processing ──────────────────────
-    logger.info("=" * 60)
-    logger.info("STEP 1: DEM Hydrological Processing")
-    logger.info("=" * 60)
-
-    dem = DEMProcessor(config_path)
-    dem.fill_sinks(output_path=str(raster_dir / "dem_filled.tif"))
-
-    slope = dem.compute_slope(output_path=str(raster_dir / "slope.tif"))
-    flow_dir = dem.compute_flow_direction(output_path=str(raster_dir / "flow_direction.tif"))
-    flow_acc = dem.compute_flow_accumulation(flow_dir, output_path=str(raster_dir / "flow_accumulation.tif"))
-    twi = dem.compute_twi(flow_acc, slope, output_path=str(raster_dir / "twi.tif"))
-
-    streams = dem.extract_stream_network(flow_acc, threshold=1000, output_path=str(raster_dir / "streams.tif"))
-    river_dist = dem.compute_distance_to_streams(streams, output_path=str(raster_dir / "river_distance.tif"))
-
-    # ─── Step 2: Flood Susceptibility ─────────────────────────────
-    logger.info("=" * 60)
-    logger.info("STEP 2: AHP-Based Flood Susceptibility")
-    logger.info("=" * 60)
-
-    susceptibility = FloodSusceptibility(config_path)
-    hazard_map, hazard_stats = susceptibility.compute(
-        twi=twi,
-        slope=str(raster_dir / "slope.tif"),
-        river_distance=str(raster_dir / "river_distance.tif"),
-        rainfall="data/rainfall_100yr.tif",
-        elevation=config["dem"]["source"],
-        soil_perm="data/ksat.tif",
-        lulc="data/nlcd.tif",
-        profile=dem.profile,
-        output_path=str(raster_dir / "flood_susceptibility.tif"),
-    )
-
-    results["susceptibility"] = hazard_stats
-    results["ahp_consistency"] = susceptibility.consistency
-
-    # ─── Step 3: Vulnerability Assessment ─────────────────────────
-    logger.info("=" * 60)
-    logger.info("STEP 3: Vulnerability Assessment")
-    logger.info("=" * 60)
-
-    vuln = VulnerabilityAssessor(config_path)
-    vuln_map, vuln_stats = vuln.compute(
-        population="data/population_density.tif",
-        infrastructure="data/critical_infrastructure.gpkg",
-        socioeconomic="data/census_svi.gpkg",
-        profile=dem.profile,
-        output_path=str(raster_dir / "vulnerability.tif"),
-    )
-
-    results["vulnerability"] = vuln_stats
-
-    # ─── Step 4: Composite Risk ───────────────────────────────────
-    logger.info("=" * 60)
-    logger.info("STEP 4: Composite Risk Index")
-    logger.info("=" * 60)
-
-    risk_calc = RiskCalculator(method="geometric_mean")
-    risk_map = risk_calc.compute(
-        hazard_map, vuln_map,
-        output_path=str(raster_dir / "flood_risk.tif"),
-        profile=dem.profile,
-    )
-
-    risk_zones = risk_calc.classify_and_export(
-        risk_map, str(vector_dir / "flood_risk_zones.gpkg"), profile=dem.profile
-    )
-
-    exposure = risk_calc.compute_exposure_statistics(
-        risk_map, "data/population_density.tif", dem.profile
-    )
-    results["exposure"] = exposure
-
-    # ─── Step 5: Scenario Analysis ────────────────────────────────
-    logger.info("=" * 60)
-    logger.info("STEP 5: Scenario Analysis")
-    logger.info("=" * 60)
-
-    scenario_results = {}
-    for rp in config["scenarios"]["return_periods"]:
-        scenario_hazard = susceptibility.run_scenario(hazard_map, rp)
-        scenario_risk = risk_calc.compute(
-            scenario_hazard, vuln_map,
-            output_path=str(raster_dir / f"risk_{rp}yr.tif"),
-            profile=dem.profile,
+    inputs = config["inputs"]
+    data = {
+        "dem": resolve(config["dem"]["source"]),
+        "rainfall": resolve(inputs["rainfall"]),
+        "ksat": resolve(inputs["soil_permeability"]),
+        "nlcd": resolve(inputs["lulc"]),
+        "population": resolve(inputs["population"]),
+        "infrastructure": resolve(inputs["infrastructure"]),
+        "census_svi": resolve(inputs["socioeconomic"]),
+    }
+    missing = [k for k, v in data.items() if not Path(v).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Input layers not found for {missing}. Run `python demo.py` for the synthetic scene "
+            "or point config.yaml to your own files."
         )
-
-        high_risk_pct = float(np.sum(scenario_risk >= 0.6) / scenario_risk.size * 100)
-        scenario_results[f"{rp}_year"] = {
-            "mean_risk": round(float(np.nanmean(scenario_risk)), 4),
-            "high_risk_percent": round(high_risk_pct, 2),
-        }
-
-    results["scenarios"] = scenario_results
-
-    # Save results
-    import numpy as np  # noqa: needed for JSON serialization
-    results_path = stats_dir / "pipeline_results.json"
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=2, default=str)
-
-    logger.info("=" * 60)
-    logger.info("PIPELINE COMPLETE")
-    logger.info(f"Results saved to: {output_dir}")
-    logger.info("=" * 60)
-
-    return results
+    return data
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Flood Risk Assessment Pipeline")
-    parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--output", default="results")
+    parser.add_argument("--config", default=str(PROJECT_DIR / "config.yaml"))
+    parser.add_argument("--output", default=str(PROJECT_DIR / "results" / "run"))
+    parser.add_argument("--figures", action="store_true", help="also write figures and the web map")
     args = parser.parse_args()
 
-    setup_logging(args.output)
-    run_pipeline(args.config, args.output)
+    output_dir = ensure_directory(args.output)
+    setup_logging(output_dir)
+    logger = logging.getLogger("pipeline")
+
+    config = load_config(args.config)
+    data = inputs_from_config(config, PROJECT_DIR)
+
+    logger.info("Running flood risk pipeline")
+    results = run_pipeline(config, data, out_dir=output_dir)
+
+    report = {
+        "timestamp": datetime.now().isoformat(),
+        "inputs": data,
+        "summary": results["summary"],
+        "ahp": results["ahp"],
+        "susceptibility": results["susceptibility_stats"],
+        "vulnerability": results["vulnerability_stats"],
+        "exposure": results["exposure"],
+        "scenarios": results["scenarios"],
+    }
+    stats_dir = ensure_directory(output_dir / "statistics")
+    with open(stats_dir / "pipeline_results.json", "w") as f:
+        json.dump(report, f, indent=2, default=str)
+
+    if args.figures:
+        from src.visualize import build_web_map, make_all_figures
+
+        make_all_figures(results, output_dir / "figures")
+        build_web_map(results).save(str(output_dir / "map.html"))
+
+    logger.info("PIPELINE COMPLETE. Results saved to: %s", output_dir)
 
 
 if __name__ == "__main__":

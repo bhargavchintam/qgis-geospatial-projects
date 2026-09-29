@@ -22,6 +22,7 @@ from .utils import (
     load_config,
     read_raster,
     write_raster,
+    write_vector,
     normalize_array,
     ensure_directory,
 )
@@ -40,10 +41,18 @@ class MitigationMapper:
 
     def __init__(self, config_path: str = "config.yaml"):
         self.config = load_config(config_path)
-        self.weights = self.config["mitigation"]["weights"]
+        self.weights = dict(self.config["mitigation"]["weights"])
+        self.priority_thresholds = dict(
+            self.config["mitigation"].get(
+                "priority_thresholds", {"high": 0.7, "medium": 0.4}
+            )
+        )
+        self.green_buffer_m = float(self.config["mitigation"].get("green_buffer_m", 400))
 
         # Validate weights sum to 1.0
         weight_sum = sum(self.weights.values())
+        if weight_sum <= 0:
+            raise ValueError("Mitigation weights must sum to a positive number")
         if not np.isclose(weight_sum, 1.0):
             logger.warning(
                 f"Mitigation weights sum to {weight_sum:.2f}, expected 1.0. Normalizing."
@@ -84,7 +93,7 @@ class MitigationMapper:
 
         # Component 3: Green space deficit
         green_deficit_score = self._compute_green_deficit_score(
-            greenspace_vector, profile
+            greenspace_vector, profile, buffer_m=self.green_buffer_m
         )
 
         # Ensure all arrays have the same shape
@@ -205,13 +214,15 @@ class MitigationMapper:
     def _compute_priority_statistics(
         self, mpi: np.ndarray, uhi_zones: np.ndarray
     ) -> Dict:
-        """Compute summary statistics for the MPI output."""
+        """Compute summary statistics for the MPI output (percent of valid pixels)."""
         valid = ~np.isnan(mpi)
+        high_thr = self.priority_thresholds["high"]
+        med_thr = self.priority_thresholds["medium"]
 
         # Priority classification
-        high_priority = np.sum((mpi >= 0.7) & valid)
-        medium_priority = np.sum((mpi >= 0.4) & (mpi < 0.7) & valid)
-        low_priority = np.sum((mpi > 0) & (mpi < 0.4) & valid)
+        high_priority = np.sum((mpi >= high_thr) & valid)
+        medium_priority = np.sum((mpi >= med_thr) & (mpi < high_thr) & valid)
+        low_priority = np.sum((mpi > 0) & (mpi < med_thr) & valid)
         total = np.sum(valid)
 
         stats = {
@@ -233,7 +244,7 @@ class MitigationMapper:
         }
 
         logger.info(
-            f"MPI Summary — High: {stats['high_priority']['percent']}%, "
+            f"MPI Summary - High: {stats['high_priority']['percent']}%, "
             f"Medium: {stats['medium_priority']['percent']}%, "
             f"Low: {stats['low_priority']['percent']}%"
         )
@@ -244,7 +255,7 @@ class MitigationMapper:
         self,
         mpi: np.ndarray,
         profile: dict,
-        output_path: str,
+        output_path: Optional[str] = None,
         thresholds: Optional[dict] = None,
     ) -> gpd.GeoDataFrame:
         """
@@ -253,20 +264,23 @@ class MitigationMapper:
         Args:
             mpi: MPI array [0, 1]
             profile: rasterio profile
-            output_path: path for output GeoPackage
+            output_path: optional path for output GeoPackage
             thresholds: dict with 'high' and 'medium' thresholds
+                (defaults to config ``mitigation.priority_thresholds``)
 
         Returns:
-            GeoDataFrame with priority zone polygons
+            GeoDataFrame with one (multi)polygon per priority class
+            (columns: priority_class 1..3, priority_label Low/Medium/High,
+            area_m2, area_ha)
         """
         if thresholds is None:
-            thresholds = {"high": 0.7, "medium": 0.4}
+            thresholds = self.priority_thresholds
 
         from rasterio.features import shapes as rasterio_shapes
         from shapely.geometry import shape
 
         # Classify
-        priority_raster = np.zeros_like(mpi, dtype=np.int8)
+        priority_raster = np.zeros(mpi.shape, dtype=np.int16)
         priority_raster = np.where(mpi >= thresholds["high"], 3, priority_raster)
         priority_raster = np.where(
             (mpi >= thresholds["medium"]) & (mpi < thresholds["high"]),
@@ -276,12 +290,12 @@ class MitigationMapper:
         priority_raster = np.where(
             (mpi > 0) & (mpi < thresholds["medium"]), 1, priority_raster
         )
-        priority_raster = np.where(np.isnan(mpi), -1, priority_raster)
+        priority_raster = np.where(np.isnan(mpi), -1, priority_raster).astype(np.int16)
 
         # Vectorize
         mask = priority_raster > 0
         results = rasterio_shapes(
-            priority_raster.astype(np.int16),
+            priority_raster,
             mask=mask,
             transform=profile["transform"],
         )
@@ -301,15 +315,24 @@ class MitigationMapper:
             crs=profile["crs"],
         )
 
-        gdf["area_m2"] = gdf.geometry.area
-        gdf["area_ha"] = gdf["area_m2"] / 10000
+        if gdf.empty:
+            gdf_dissolved = gpd.GeoDataFrame(
+                {"priority_class": [], "priority_label": [], "area_m2": [], "area_ha": []},
+                geometry=[],
+                crs=profile["crs"],
+            )
+        else:
+            # Dissolve by priority class
+            gdf_dissolved = gdf.dissolve(by="priority_class", as_index=False)
+            gdf_dissolved["priority_label"] = gdf_dissolved["priority_class"].map(priority_labels)
+            gdf_dissolved["area_m2"] = gdf_dissolved.geometry.area
+            gdf_dissolved["area_ha"] = gdf_dissolved["area_m2"] / 10000
+            gdf_dissolved = gdf_dissolved.sort_values(
+                "priority_class", ascending=False
+            ).reset_index(drop=True)
 
-        # Dissolve by priority class
-        gdf_dissolved = gdf.dissolve(by="priority_class", as_index=False)
-        gdf_dissolved["area_m2"] = gdf_dissolved.geometry.area
-        gdf_dissolved["area_ha"] = gdf_dissolved["area_m2"] / 10000
-
-        gdf_dissolved.to_file(output_path, driver="GPKG")
-        logger.info(f"Priority zones saved to: {output_path}")
+        if output_path:
+            write_vector(gdf_dissolved, output_path, layer="mitigation_priority_zones")
+            logger.info(f"Priority zones saved to: {output_path}")
 
         return gdf_dissolved

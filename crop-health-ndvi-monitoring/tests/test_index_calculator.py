@@ -85,9 +85,10 @@ class TestEVI:
 
     def test_evi_less_saturated_than_ndvi(self, calculator):
         """EVI should be less saturated than NDVI in high-biomass areas."""
-        nir = np.array([[0.80]])
-        red = np.array([[0.03]])
-        blue = np.array([[0.02]])
+        # realistic dense canopy (old fixture nir=0.80 made EVI 2.5*0.77/1.83 > NDVI)
+        nir = np.array([[0.45]])
+        red = np.array([[0.04]])
+        blue = np.array([[0.03]])
 
         ndvi = calculator.ndvi(nir, red)
         evi = calculator.evi(nir, red, blue)

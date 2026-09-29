@@ -32,7 +32,7 @@ class LSTProcessor:
     correction based on NDVI-derived proportion of vegetation.
     """
 
-    # Physical constant: h*c / (σ * λ) — Planck's radiation constant
+    # Physical constant: h*c / (σ * λ) - Planck's radiation constant
     RHO = 1.438e-2  # m·K
 
     def __init__(self, config_path: str = "config.yaml"):
@@ -107,13 +107,20 @@ class LSTProcessor:
             (lst_celsius > -50) & (lst_celsius < 80), lst_celsius, np.nan
         )
 
+        # Return a clean float profile. The thermal band is usually uint16
+        # with nodata=0; downstream rasters are float with NaN nodata.
+        profile = dict(profile)
+        profile.update(dtype="float32", nodata=np.nan, count=1)
+        for key in ("blockxsize", "blockysize", "tiled", "interleave"):
+            profile.pop(key, None)
+
         if output_path:
             write_raster(lst_celsius, profile, output_path)
             logger.info(f"LST raster saved to: {output_path}")
 
         # Log summary statistics
         logger.info(
-            f"LST Statistics — "
+            f"LST Statistics - "
             f"Mean: {np.nanmean(lst_celsius):.1f}°C, "
             f"Max: {np.nanmax(lst_celsius):.1f}°C, "
             f"Min: {np.nanmin(lst_celsius):.1f}°C, "
@@ -143,9 +150,11 @@ class LSTProcessor:
             # Level-1: DN → Radiance → BT using Planck equation
             # Lλ = ML * Qcal + AL (using metadata values)
             radiance = thermal * 0.0003342 + 0.1
-            bt = self.K2 / np.log((self.K1 / radiance) + 1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                bt = self.K2 / np.log((self.K1 / radiance) + 1)
 
-        bt = np.where(bt > 0, bt, np.nan)
+        # DN fill value 0 gives 149 K which is not a real surface temperature
+        bt = np.where(bt > 150.0, bt, np.nan)
         return bt
 
     def _compute_ndvi(self, red: np.ndarray, nir: np.ndarray) -> np.ndarray:
@@ -223,7 +232,7 @@ class LSTProcessor:
         # Water and bare soil
         emissivity = np.where(ndvi < soil_thresh, self.emissivity_cfg["soil"], emissivity)
 
-        # Mixed pixels — linear model
+        # Mixed pixels - linear model
         mixed_mask = (ndvi >= soil_thresh) & (ndvi <= veg_thresh)
         emissivity = np.where(
             mixed_mask,
@@ -269,28 +278,36 @@ class LSTProcessor:
         self,
         lst: np.ndarray,
         rural_mask_path: Optional[str] = None,
+        rural_mask: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
-        Compute LST anomaly relative to rural baseline.
+        Compute LST anomaly relative to a rural baseline.
 
         The UHI effect is measured as the difference between local LST
-        and the mean rural LST (or study area mean if no rural mask).
+        and the mean rural LST (or the study area mean if no mask is given).
 
         Args:
             lst: LST array in Celsius
-            rural_mask_path: optional path to rural area mask raster
+            rural_mask_path: optional path to a rural area mask raster (>0 = rural)
+            rural_mask: optional boolean/int array with the same shape as ``lst``
+                (>0 = rural). Takes precedence over ``rural_mask_path``.
 
         Returns:
             LST anomaly array (positive = warmer than baseline)
         """
-        if rural_mask_path:
+        baseline = None
+        if rural_mask is None and rural_mask_path:
             rural_mask, _ = read_raster(rural_mask_path)
-            rural_lst = lst[rural_mask > 0]
-            baseline = np.nanmean(rural_lst)
-        else:
-            baseline = np.nanmean(lst)
+
+        if rural_mask is not None:
+            rural_lst = lst[(rural_mask > 0) & ~np.isnan(lst)]
+            if rural_lst.size > 0:
+                baseline = float(np.mean(rural_lst))
+        if baseline is None:
+            baseline = float(np.nanmean(lst))
 
         anomaly = lst - baseline
-        logger.info(f"LST Anomaly — Baseline: {baseline:.1f}°C, Max anomaly: {np.nanmax(anomaly):.1f}°C")
+        self.last_baseline = baseline
+        logger.info(f"LST Anomaly - Baseline: {baseline:.1f}°C, Max anomaly: {np.nanmax(anomaly):.1f}°C")
 
         return anomaly

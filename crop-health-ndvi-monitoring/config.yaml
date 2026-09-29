@@ -5,13 +5,16 @@
 study_area:
   name: "Story County, Iowa"
   crs: "EPSG:32615"  # UTM Zone 15N
+  # Real data: point these at your own scene folder and field polygons.
+  # `python demo.py` writes a synthetic season to results/demo/data instead.
+  sentinel_dir: "data/sentinel2"
   field_boundaries: "data/field_boundaries.geojson"
-  crop_type: "corn"
+  crop_type: "corn and soybean"
 
 sentinel:
   platform: "Sentinel-2"
   product_type: "S2MSI2A"  # Level-2A atmospherically corrected
-  cloud_cover_max: 15
+  cloud_cover_max: 15      # scenes above this masked % are not used for the assessment
   bands:
     blue: "B02"        # 490nm, 10m
     green: "B03"       # 560nm, 10m
@@ -41,6 +44,12 @@ indices:
   compute: ["ndvi", "evi", "savi", "ndre", "ndwi"]
   savi_L: 0.5  # Soil adjustment factor
 
+phenology:
+  smoothing: "savgol"   # savgol or moving_average
+  window_length: 5
+  polyorder: 2
+  block_size: 5         # pixels per side for the block-wise double-logistic fit (1 = per pixel)
+
 anomaly:
   method: "z_score"  # Options: z_score, isolation_forest, lof
   z_score_threshold: -1.5
@@ -57,9 +66,15 @@ classification:
     moderate: {min: 0.35, max: 0.55, color: "#FFD700"}
     poor: {min: 0.20, max: 0.35, color: "#FF8C00"}
     very_poor: {min: 0.0, max: 0.20, color: "#DC143C"}
+  ndre_stress_z: -1.0   # flag a field when its NDRE residual (vs the NDRE~NDVI line) is below this many std
+
+demo:
+  size: 200
+  seed: 42
+  out_dir: "results/demo"
 
 output:
   directory: "results"
-  formats: ["GeoTIFF", "GeoPackage", "PNG", "CSV"]
-  dpi: 300
+  formats: ["GeoTIFF", "GeoJSON", "PNG", "CSV"]
+  dpi: 150
   time_series_plots: true

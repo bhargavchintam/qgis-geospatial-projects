@@ -1,0 +1,89 @@
+##############################################################
+# Utility-Scale Solar Farm Site Suitability - configuration
+##############################################################
+
+study_area:
+  name: "Hualapai Valley near Kingman, Mohave County, Arizona"
+  crs: "EPSG:32612"          # UTM zone 12N
+  center_lon: -114.05
+  center_lat: 35.19
+  extent_m: 18000            # 18 km x 18 km square
+  resolution_m: 90           # at the default 200 x 200 demo grid
+
+# Input layers. The demo overwrites these with synthetic files in
+# results/demo/data/. Point them at real downloads to run on real data.
+inputs:
+  dem: "data/dem.tif"                           # USGS 3DEP 1/3 arc-second DEM (reprojected to UTM)
+  ghi: "data/ghi.tif"                           # NREL NSRDB multi-year mean GHI (kWh/m2/day)
+  landuse: "data/landuse.tif"                   # NLCD reclassified to codes 1-5 below
+  transmission_lines: "data/transmission_lines.gpkg"   # HIFLD Electric Power Transmission Lines
+  substations: "data/substations.gpkg"          # HIFLD Electric Substations
+  roads: "data/roads.gpkg"                      # TIGER/Line primary and secondary roads
+  residential: "data/residential.gpkg"          # NLCD developed classes polygonised (or parcels)
+  protected_areas: "data/protected_areas.gpkg"  # USGS PAD-US
+
+landuse_codes:
+  1: "Desert scrub"
+  2: "Agriculture"
+  3: "Urban"
+  4: "Water"
+  5: "Protected area"
+
+# Standardisation curves (see src/criteria.py for the formulas)
+criteria:
+  ghi:
+    lo: 5.0          # kWh/m2/day -> score 0
+    hi: 7.0          # kWh/m2/day -> score 1
+  slope:
+    ideal: 3.0       # degrees, score 1 up to here
+    max_ok: 10.0     # degrees, score 0 from here
+  grid_distance:     # min(distance to transmission line, distance to substation)
+    full_score_within: 1000   # m
+    zero_at: 15000            # m
+  road_distance:
+    full_score_within: 1000   # m
+    zero_at: 15000            # m
+  landuse:
+    mapping:
+      1: 1.0   # desert scrub - best
+      2: 0.4   # agriculture - possible but conflicts with farming
+      3: 0.0   # urban
+      4: 0.0   # water
+      5: 0.0   # protected
+
+# AHP pairwise comparison (Saaty 1-9 scale). Row i / column j = how much
+# more important criterion i is than criterion j.
+ahp:
+  criteria_names: [ghi, slope, aspect, grid_distance, road_distance, landuse]
+  pairwise_matrix:
+    - [1,     3,     5,     2,     4,     3]
+    - [0.333, 1,     3,     1,     2,     2]
+    - [0.2,   0.333, 1,     0.333, 0.5,   0.5]
+    - [0.5,   1,     3,     1,     3,     2]
+    - [0.25,  0.5,   2,     0.333, 1,     1]
+    - [0.333, 0.5,   2,     0.5,   1,     1]
+  consistency_threshold: 0.10
+
+constraints:
+  water_codes: [4]
+  urban_codes: [3]
+  protected_codes: [5]
+  max_slope: 15.0             # degrees
+  residential_buffer_m: 500   # metres from residential polygons
+
+classification:
+  thresholds: [0.50, 0.60, 0.68, 0.75]   # class boundaries for Very Low .. Very High
+
+site_extraction:
+  threshold: 0.75        # index value a pixel needs to be part of a site (= Very High class)
+  min_area_ha: 50        # smallest patch kept
+  ha_per_mw: 2.0         # ~2 ha per MW fixed-tilt utility PV (NREL, Ong et al. 2013)
+  module_efficiency: 0.20
+  ground_cover_ratio: 0.40
+  performance_ratio: 0.85
+  top_n: 10              # sites labelled on the maps
+
+output:
+  directory: "results/demo"
+  figures: "docs/figures"
+  dpi: 150

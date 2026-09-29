@@ -1,0 +1,10 @@
+# demo and app outputs
+results/
+
+# caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS
+.DS_Store

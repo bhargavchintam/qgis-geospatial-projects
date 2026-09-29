@@ -4,9 +4,22 @@
 
 study_area:
   name: "Phoenix Metropolitan Area"
-  bbox: [-112.45, 33.20, -111.60, 33.85]  # [west, south, east, north]
+  bbox: [-112.45, 33.20, -111.60, 33.85]  # [west, south, east, north] for real-data downloads
   crs: "EPSG:32612"  # UTM Zone 12N
   boundary_file: "data/study_area_boundary.gpkg"
+
+# Folder with real inputs for scripts/run_pipeline.py:
+#   LC09_B10.TIF, LC09_B4.TIF, LC09_B5.TIF, nlcd_lulc.tif, impervious.tif,
+#   population_density.tif, parks_greenspace.gpkg (all on the same 30 m grid)
+data_directory: "data"
+
+# Synthetic scene used by demo.py, app.py and the tests (no download needed)
+synthetic:
+  center_lon: -112.07
+  center_lat: 33.45
+  resolution_m: 30
+  size: 200
+  seed: 42
 
 landsat:
   collection: 2
@@ -17,7 +30,7 @@ landsat:
   date_range:
     start: "2024-06-01"
     end: "2024-08-31"
-  # Calibration constants for Landsat 9 Band 10
+  # Calibration constants for Landsat 9 Band 10 (used for Level-1 input only)
   constants:
     K1: 799.0284
     K2: 1329.2405
@@ -35,21 +48,25 @@ emissivity:
 
 classification:
   method: "standard_deviation"
-  uhi_thresholds:
-    extreme: 2.0     # mean + 2σ
-    strong: 1.5      # mean + 1.5σ
-    moderate: 1.0    # mean + 1σ
-    mild: 0.5        # mean + 0.5σ
+  uhi_thresholds:      # multipliers k in  LST >= mean + k * std
+    extreme: 2.0
+    strong: 1.5
+    moderate: 1.0
+    mild: 0.5          # Cool Island is the mirror: LST < mean - mild * std
 
 mitigation:
-  weights:
+  weights:             # normalised to sum to 1 if they do not
     thermal_anomaly: 0.40
     population_density: 0.35
     green_space_deficit: 0.25
+  priority_thresholds: # on the 0..1 Mitigation Priority Index
+    high: 0.7
+    medium: 0.4
+  green_buffer_m: 400  # walking distance that counts as "has a park nearby"
   population_raster: "data/population_density.tif"
   greenspace_vector: "data/parks_greenspace.gpkg"
 
 output:
   directory: "results"
   formats: ["GeoTIFF", "GeoPackage", "PNG"]
-  dpi: 300
+  dpi: 150

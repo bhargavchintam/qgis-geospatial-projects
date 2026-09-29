@@ -1,0 +1,23 @@
+# Union of all six project requirements.
+# Use this at the repo root for a single environment (e.g. Streamlit Community Cloud
+# picks up the requirements.txt closest to the app file, falling back to this one).
+# Each project folder also has its own smaller requirements.txt.
+numpy>=1.24.0
+scipy>=1.11.0
+pandas>=2.0.0
+shapely>=2.0.0
+pyproj>=3.6.0
+pyogrio>=0.7.0
+geopandas>=0.14.0
+rasterio>=1.3.0
+rasterstats>=0.19.0
+scikit-learn>=1.3.0
+networkx>=3.1
+osmnx>=1.9.0
+matplotlib>=3.7.0
+folium>=0.15.0
+branca>=0.7.0
+streamlit>=1.32.0
+pyyaml>=6.0
+requests>=2.31.0
+pytest>=7.4.0

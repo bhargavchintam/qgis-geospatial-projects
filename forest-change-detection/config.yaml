@@ -1,0 +1,64 @@
+##############################################
+# Forest Change Detection Configuration
+##############################################
+
+study_area:
+  name: "Rondônia, Brazil (arc of deforestation)"
+  crs: "EPSG:32720"          # UTM zone 20S
+  center_lon: -62.9
+  center_lat: -10.9
+  pixel_size_m: 20
+  default_size_px: 200       # 200 x 200 px = 4 km x 4 km
+
+dates:
+  t1: "2019-07-15"           # dry season, low cloud
+  t2: "2024-07-15"
+  years_between: 5.0
+
+sentinel:
+  platform: "Sentinel-2"
+  product_type: "S2MSI2A"    # Level-2A surface reflectance
+  cloud_cover_max: 10
+  scale_factor: 10000        # DN / 10000 = reflectance
+  bands: ["B02", "B03", "B04", "B08", "B11", "B12"]   # blue, green, red, NIR, SWIR1, SWIR2 (all resampled to 20 m)
+
+classes:
+  names:
+    1: "Forest"
+    2: "Pasture/Cleared"
+    3: "Water"
+    4: "Bare/Road"
+    5: "Regrowth"
+  forest_class: 1
+
+classification:
+  features: ["B02", "B03", "B04", "B08", "B11", "B12", "NDVI", "NBR", "NDMI"]
+  n_samples_per_class: 400   # per date, stratified random
+  train_fraction: 0.7        # 70 / 30 train / held-out test split
+  random_forest:
+    n_estimators: 100
+    n_jobs: -1
+    random_state: 42
+
+change_detection:
+  dnbr_loss_threshold: 0.27  # USGS burn severity: "moderate-low" starts at dNBR 0.27
+  evidence_rule: "both"      # both | post_classification | dnbr
+  min_mapping_unit_ha: 0.5   # 0.5 ha = 13 pixels at 20 m
+  road_distance_m: 500       # "near road" buffer for the loss share statistic
+
+synthetic:
+  clearing_intensity: 1.0    # multiplier on number / size of T2 clearings (0.5 .. 2.0)
+
+# Paths used when you swap the synthetic scene for real Sentinel-2 data
+real_data:
+  t1_stack: "data/S2A_T20LNQ_20190715_stack.tif"    # 6-band reflectance stack (B02,B03,B04,B08,B11,B12)
+  t2_stack: "data/S2A_T20LNQ_20240715_stack.tif"
+  cloud_mask_t2: "data/S2_20240715_cloudmask.tif"    # 1 = cloud (from SCL classes 3, 8, 9, 10)
+  reference_t1: "data/reference_2019.tif"            # training/validation labels (MapBiomas / PRODES / digitised)
+  reference_t2: "data/reference_2024.tif"
+  roads: "data/roads_osm.gpkg"
+  river: "data/rivers.gpkg"
+
+output:
+  directory: "results"
+  figure_dpi: 150

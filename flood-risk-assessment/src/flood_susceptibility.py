@@ -1,257 +1,197 @@
 """
 Flood Susceptibility Mapping
 
-Computes flood susceptibility using AHP-weighted multi-criteria overlay.
-Combines terrain, hydrological, and environmental factors into a
-unified susceptibility index.
+Computes flood susceptibility with an AHP-weighted multi-criteria overlay
+of terrain, hydrological and environmental factors. The result is a
+composite susceptibility index in [0, 1].
 """
 
-import numpy as np
-import rasterio
 import logging
-from typing import Dict, Optional, Tuple
 from pathlib import Path
+from typing import Dict, Optional, Tuple, Union
+
+import numpy as np
 
 from .ahp import AHPEngine
-from .utils import (
-    load_config,
-    read_raster,
-    write_raster,
-    normalize_array,
-    reclassify_raster,
-    ensure_directory,
-)
+from .utils import as_array, load_config, normalize_array, reclassify_raster, write_raster
 
 logger = logging.getLogger(__name__)
+
+RasterLike = Union[str, Path, np.ndarray]
+
+# NLCD class -> flood susceptibility score (higher = more flood prone)
+NLCD_SCORES = {
+    11: 0.3,   # Open Water (flood source)
+    21: 0.5,   # Developed, Open Space
+    22: 0.7,   # Developed, Low Intensity
+    23: 0.85,  # Developed, Medium Intensity
+    24: 1.0,   # Developed, High Intensity
+    31: 0.6,   # Barren Land
+    41: 0.15,  # Deciduous Forest
+    42: 0.15,  # Evergreen Forest
+    43: 0.15,  # Mixed Forest
+    52: 0.25,  # Shrub/Scrub
+    71: 0.3,   # Grassland/Herbaceous
+    81: 0.35,  # Pasture/Hay
+    82: 0.4,   # Cultivated Crops
+    90: 0.2,   # Woody Wetlands
+    95: 0.2,   # Emergent Herbaceous Wetlands
+}
 
 
 class FloodSusceptibility:
     """
     AHP-based flood susceptibility mapping.
 
-    Combines multiple criteria layers with AHP-derived weights
-    to produce a composite flood susceptibility index [0, 1].
+    Combines seven criteria layers with AHP-derived weights into a
+    composite flood susceptibility index in [0, 1].
     """
 
-    def __init__(self, config_path: str = "config.yaml"):
-        self.config = load_config(config_path)
+    def __init__(self, config: Union[str, Path, dict] = "config.yaml"):
+        self.config = load_config(config)
         self.ahp_cfg = self.config["ahp"]
-        self.reclass_cfg = self.config["susceptibility"]["reclassification"]
+        self.reclass_cfg = self.config["susceptibility"].get("reclassification", {})
         self.class_cfg = self.config["susceptibility"]["classification"]
 
-        # Initialize AHP engine
         self.ahp = AHPEngine(
             pairwise_matrix=self.ahp_cfg["pairwise_matrix"],
             criteria_names=self.ahp_cfg["criteria_names"],
-            consistency_threshold=self.ahp_cfg["consistency_threshold"],
+            consistency_threshold=self.ahp_cfg.get("consistency_threshold", 0.10),
         )
-
-        # Compute and validate weights
         self.weights = self.ahp.compute_weights()
         self.consistency = self.ahp.compute_consistency()
-
         if not self.consistency["is_consistent"]:
             raise ValueError(
                 f"AHP matrix inconsistent: CR={self.consistency['CR']:.4f} "
-                f"(threshold: {self.consistency['threshold']}). "
-                "Revise pairwise comparisons."
+                f"(threshold: {self.consistency['threshold']}). Revise pairwise comparisons."
             )
+
+    def _score(self, name: str, data: np.ndarray, invert: bool) -> np.ndarray:
+        """
+        Reclassify with the config scheme if present, else min-max normalise
+        after clipping to config['susceptibility']['percentile_clip'].
+        """
+        if name in self.reclass_cfg:
+            return reclassify_raster(data, self.reclass_cfg[name])
+        clip = self.config["susceptibility"].get("percentile_clip")
+        if clip:
+            lo, hi = np.nanpercentile(data, clip)
+            data = np.clip(data, lo, hi)
+        return normalize_array(data, invert=invert)
 
     def compute(
         self,
-        twi: np.ndarray,
-        slope: str,
-        river_distance: str,
-        rainfall: str,
-        elevation: str,
-        soil_perm: str,
-        lulc: str,
+        twi: RasterLike,
+        slope: RasterLike,
+        river_distance: RasterLike,
+        rainfall: RasterLike,
+        elevation: RasterLike,
+        soil_perm: RasterLike,
+        lulc: RasterLike,
         profile: Optional[dict] = None,
         output_path: Optional[str] = None,
     ) -> Tuple[np.ndarray, dict]:
         """
-        Compute flood susceptibility index from multi-criteria overlay.
+        Compute the flood susceptibility index from the multi-criteria overlay.
 
-        All raster inputs must cover the same extent and have the same
-        dimensions. Use QGIS or rasterio to align/resample if needed.
+        Every input can be a raster path or an in-memory array. All layers
+        must share the same grid; a layer with a different shape is resampled
+        bilinearly to the TWI grid.
 
         Args:
-            twi: Topographic Wetness Index array (already computed)
-            slope: path to slope raster (degrees)
-            river_distance: path to distance-to-river raster (meters)
-            rainfall: path to rainfall intensity raster
-            elevation: path to DEM (meters)
-            soil_perm: path to soil permeability raster (Ksat)
-            lulc: path to LULC raster
-            profile: rasterio profile for output
-            output_path: optional output path
+            twi: Topographic Wetness Index
+            slope: slope in degrees (lower = more flood prone)
+            river_distance: distance to streams in metres (closer = more prone)
+            rainfall: design rainfall depth (higher = more prone)
+            elevation: DEM in metres (lower = more prone)
+            soil_perm: saturated hydraulic conductivity (lower = more prone)
+            lulc: NLCD land cover codes
+            profile: rasterio profile for the optional output
+            output_path: optional GeoTIFF path
 
         Returns:
-            tuple: (susceptibility array [0,1], statistics dict)
+            (susceptibility array in [0, 1], class statistics dict)
         """
         logger.info("Computing flood susceptibility index")
-        logger.info(f"AHP weights: {self.ahp.get_weight_dict()}")
+        criteria = {
+            "twi": self._score("twi", as_array(twi), invert=False),
+            "slope": self._score("slope", as_array(slope), invert=True),
+            "river_distance": self._score("river_distance", as_array(river_distance), invert=True),
+            "rainfall": self._score("rainfall", as_array(rainfall), invert=False),
+            "elevation": self._score("elevation", as_array(elevation), invert=True),
+            "soil_permeability": self._score("soil_permeability", as_array(soil_perm), invert=True),
+            "lulc": self._reclassify_lulc(as_array(lulc)),
+        }
 
-        # Load and standardize criteria layers
-        criteria = {}
+        target_shape = criteria["twi"].shape
+        susceptibility = np.zeros(target_shape, dtype=np.float64)
+        self.criterion_means: Dict[str, float] = {}
+        for name, weight in self.ahp.get_weight_dict().items():
+            if name not in criteria:
+                logger.warning(f"No layer supplied for AHP criterion '{name}'; skipped")
+                continue
+            layer = criteria[name]
+            if layer.shape != target_shape:
+                from scipy.ndimage import zoom
 
-        # TWI — already an array; higher TWI = more flood prone
-        criteria["twi"] = normalize_array(twi)
+                layer = zoom(layer, (target_shape[0] / layer.shape[0],
+                                     target_shape[1] / layer.shape[1]), order=1)
+            layer = np.nan_to_num(layer, nan=float(np.nanmean(layer)))
+            susceptibility += weight * layer
+            self.criterion_means[name] = round(float(np.mean(layer)), 4)
+            logger.info(f"  {name}: weight={weight:.4f}, mean_score={np.mean(layer):.3f}")
 
-        # Slope — lower slope = more flood prone (invert)
-        slope_data, slope_profile = read_raster(slope)
-        if "slope" in self.reclass_cfg:
-            criteria["slope"] = reclassify_raster(slope_data, self.reclass_cfg["slope"])
-        else:
-            criteria["slope"] = normalize_array(slope_data, invert=True)
-
-        if profile is None:
-            profile = slope_profile
-
-        # Distance to rivers — closer = more flood prone (invert)
-        dist_data, _ = read_raster(river_distance)
-        if "river_distance" in self.reclass_cfg:
-            criteria["river_distance"] = reclassify_raster(
-                dist_data, self.reclass_cfg["river_distance"]
-            )
-        else:
-            criteria["river_distance"] = normalize_array(dist_data, invert=True)
-
-        # Rainfall intensity — higher = more flood prone
-        rain_data, _ = read_raster(rainfall)
-        criteria["rainfall"] = normalize_array(rain_data)
-
-        # Elevation — lower = more flood prone (invert)
-        elev_data, _ = read_raster(elevation)
-        if "elevation" in self.reclass_cfg:
-            criteria["elevation"] = reclassify_raster(
-                elev_data, self.reclass_cfg["elevation"]
-            )
-        else:
-            criteria["elevation"] = normalize_array(elev_data, invert=True)
-
-        # Soil permeability — lower Ksat = more flood prone (invert)
-        soil_data, _ = read_raster(soil_perm)
-        criteria["soil_permeability"] = normalize_array(soil_data, invert=True)
-
-        # LULC — reclassify based on imperviousness
-        lulc_data, _ = read_raster(lulc)
-        criteria["lulc"] = self._reclassify_lulc(lulc_data)
-
-        # Weighted overlay
-        weight_dict = self.ahp.get_weight_dict()
-        susceptibility = np.zeros_like(criteria["twi"])
-
-        for criterion_name, weight in weight_dict.items():
-            if criterion_name in criteria:
-                layer = criteria[criterion_name]
-                # Resize if dimensions don't match
-                if layer.shape != susceptibility.shape:
-                    from scipy.ndimage import zoom
-                    factors = (
-                        susceptibility.shape[0] / layer.shape[0],
-                        susceptibility.shape[1] / layer.shape[1],
-                    )
-                    layer = zoom(layer, factors, order=1)
-
-                susceptibility += weight * layer
-                logger.info(
-                    f"  {criterion_name}: weight={weight:.4f}, "
-                    f"mean_score={np.nanmean(layer):.3f}"
-                )
-
-        # Normalize to [0, 1]
         susceptibility = normalize_array(susceptibility)
-
         stats = self._compute_statistics(susceptibility)
 
         if output_path and profile:
             write_raster(susceptibility, profile, output_path)
             logger.info(f"Flood susceptibility map saved to: {output_path}")
-
         return susceptibility, stats
 
-    def _reclassify_lulc(self, lulc: np.ndarray) -> np.ndarray:
-        """
-        Reclassify LULC to flood susceptibility scores.
-
-        Impervious surfaces → high susceptibility
-        Vegetation/water → low susceptibility
-        """
-        # NLCD-based scoring (higher = more flood prone)
-        lulc_scores = {
-            11: 0.3,   # Open Water — moderate (can be flood source)
-            21: 0.5,   # Developed, Open Space
-            22: 0.7,   # Developed, Low Intensity
-            23: 0.85,  # Developed, Medium Intensity
-            24: 1.0,   # Developed, High Intensity
-            31: 0.6,   # Barren Land
-            41: 0.15,  # Deciduous Forest
-            42: 0.15,  # Evergreen Forest
-            43: 0.15,  # Mixed Forest
-            52: 0.25,  # Shrub/Scrub
-            71: 0.3,   # Grassland/Herbaceous
-            81: 0.35,  # Pasture/Hay
-            82: 0.4,   # Cultivated Crops
-            90: 0.2,   # Woody Wetlands
-            95: 0.2,   # Emergent Herbaceous Wetlands
-        }
-
-        result = np.full_like(lulc, 0.5, dtype=np.float64)
-        for code, score in lulc_scores.items():
+    @staticmethod
+    def _reclassify_lulc(lulc: np.ndarray) -> np.ndarray:
+        """Map NLCD codes to susceptibility scores (unknown codes get 0.5)."""
+        result = np.full(lulc.shape, 0.5, dtype=np.float64)
+        for code, score in NLCD_SCORES.items():
             result[lulc == code] = score
-
         return result
 
+    def classify(self, susceptibility: np.ndarray) -> np.ndarray:
+        """Discrete classes 1 (very low) .. 5 (very high) from config thresholds."""
+        c = self.class_cfg
+        classes = np.ones(susceptibility.shape, dtype=np.int8)
+        classes[susceptibility >= c["low"]] = 2
+        classes[susceptibility >= c["moderate"]] = 3
+        classes[susceptibility >= c["high"]] = 4
+        classes[susceptibility >= c["very_high"]] = 5
+        classes[np.isnan(susceptibility)] = 0
+        return classes
+
     def _compute_statistics(self, susceptibility: np.ndarray) -> dict:
-        """Compute susceptibility class statistics."""
-        total = np.sum(~np.isnan(susceptibility))
-
-        classes = {
-            "very_high": susceptibility >= self.class_cfg["very_high"],
-            "high": (susceptibility >= self.class_cfg["high"])
-            & (susceptibility < self.class_cfg["very_high"]),
-            "moderate": (susceptibility >= self.class_cfg["moderate"])
-            & (susceptibility < self.class_cfg["high"]),
-            "low": (susceptibility >= self.class_cfg["low"])
-            & (susceptibility < self.class_cfg["moderate"]),
-            "very_low": susceptibility < self.class_cfg["low"],
-        }
-
+        """Pixel count and area percent per susceptibility class."""
+        classes = self.classify(susceptibility)
+        total = int(np.sum(classes > 0))
+        names = {1: "very_low", 2: "low", 3: "moderate", 4: "high", 5: "very_high"}
         stats = {}
-        for class_name, mask in classes.items():
-            count = int(np.sum(mask))
-            stats[class_name] = {
+        for value, name in names.items():
+            count = int(np.sum(classes == value))
+            stats[name] = {
                 "pixel_count": count,
-                "area_percent": round(count / total * 100, 2) if total > 0 else 0,
+                "area_percent": round(count / total * 100, 2) if total > 0 else 0.0,
             }
-
         return stats
 
-    def run_scenario(
-        self,
-        base_susceptibility: np.ndarray,
-        return_period: int,
-    ) -> np.ndarray:
+    def run_scenario(self, base_susceptibility: np.ndarray, return_period: int) -> np.ndarray:
         """
-        Scale susceptibility for a specific return period.
-
-        Args:
-            base_susceptibility: 100-year susceptibility map
-            return_period: target return period (years)
-
-        Returns:
-            Scaled susceptibility array
+        Scale the 100-year susceptibility to another return period using the
+        factors in config['scenarios']['return_period_factors'], clipped to [0, 1].
         """
         factors = self.config["scenarios"]["return_period_factors"]
-        factor = factors.get(return_period, 1.0)
-
-        scaled = base_susceptibility * factor
-        scaled = np.clip(scaled, 0, 1)
-
+        factor = float(factors.get(return_period, factors.get(str(return_period), 1.0)))
+        scaled = np.clip(base_susceptibility * factor, 0, 1)
         logger.info(
-            f"Scenario: {return_period}-year return period, "
-            f"factor={factor}, mean susceptibility={np.nanmean(scaled):.3f}"
+            f"Scenario: {return_period}-year return period, factor={factor}, "
+            f"mean susceptibility={np.nanmean(scaled):.3f}"
         )
-
         return scaled

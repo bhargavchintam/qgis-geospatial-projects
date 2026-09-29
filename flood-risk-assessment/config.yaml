@@ -1,20 +1,31 @@
 ##############################################
 # Multi-Criteria Flood Risk Assessment Config
 ##############################################
+# Paths are relative to the project folder. By default they point to the
+# synthetic demo scene written by `python demo.py`. For a real study, replace
+# them with your own layers (see README "Use it with real data").
 
 study_area:
   name: "Harris County, TX"
   crs: "EPSG:32615"  # UTM Zone 15N
-  boundary: "data/harris_county.gpkg"
+  boundary: "results/demo/data/study_boundary.gpkg"
 
 dem:
-  source: "data/dem_10m.tif"
-  resolution: 10  # meters
-  fill_method: "wang_liu"  # Options: wang_liu, planchon_darboux
+  source: "results/demo/data/dem.tif"
+  resolution: 30  # metres (matches the demo scene; 3DEP 10 m for real runs)
+  fill_method: "priority_flood"  # numpy priority-flood; "whitebox" uses WhiteboxTools if installed
+
+inputs:
+  rainfall: "results/demo/data/rainfall_100yr.tif"          # mm, 100-yr 24-h depth (NOAA Atlas 14)
+  soil_permeability: "results/demo/data/ksat.tif"           # Ksat, micrometres/s (SSURGO)
+  lulc: "results/demo/data/nlcd.tif"                        # NLCD class codes
+  population: "results/demo/data/population_density.tif"    # people per km2
+  infrastructure: "results/demo/data/critical_infrastructure.gpkg"  # points, 'type' column (HIFLD)
+  socioeconomic: "results/demo/data/census_svi.gpkg"        # polygons, RPL_THEMES 0..1 (CDC SVI)
 
 stream_network:
-  accumulation_threshold: 1000  # cells
-  buffer_distances: [100, 250, 500, 1000, 2000]  # meters
+  accumulation_threshold: 400  # cells (400 x 30 m cells = 0.36 km2 upstream area)
+  buffer_distances: [100, 250, 500, 1000, 2000]  # metres (for reporting)
 
 ahp:
   # Pairwise comparison matrix (Saaty scale 1-9)
@@ -23,10 +34,10 @@ ahp:
     - [1,    2,    2,    3,    3,    4,    5]
     - [0.5,  1,    1,    2,    2,    3,    4]
     - [0.5,  1,    1,    1,    2,    2,    3]
-    - [0.33, 0.5,  1,    1,    1,    2,    2]
-    - [0.33, 0.5,  0.5,  1,    1,    1,    2]
-    - [0.25, 0.33, 0.5,  0.5,  1,    1,    1]
-    - [0.2,  0.25, 0.33, 0.5,  0.5,  1,    1]
+    - [0.3333, 0.5,    1,      1,    1,    2,    2]
+    - [0.3333, 0.5,    0.5,    1,    1,    1,    2]
+    - [0.25,   0.3333, 0.5,    0.5,  1,    1,    1]
+    - [0.2,    0.25,   0.3333, 0.5,  0.5,  1,    1]
   criteria_names:
     - "twi"
     - "slope"
@@ -44,23 +55,36 @@ susceptibility:
     moderate: 0.4
     low: 0.2
 
-  # Reclassification schemes for each criterion
-  reclassification:
-    slope:  # degrees → susceptibility score
-      - {range: [0, 2], score: 5}
-      - {range: [2, 5], score: 4}
-      - {range: [5, 10], score: 3}
-      - {range: [10, 20], score: 2}
-      - {range: [20, 90], score: 1}
+  # Continuous criteria (rainfall, Ksat) are min-max scaled after clipping to
+  # these percentiles so a few extreme cells do not compress the rest.
+  percentile_clip: [1, 99]
 
-    elevation:  # meters above sea level
+  # Reclassification schemes (value range -> score 1..5, later divided by 5).
+  # Breaks are tuned for a flat coastal plain at 30 m (Harris County). For a
+  # hilly watershed use e.g. slope 0-2 / 2-5 / 5-10 / 10-20 / 20-90 degrees.
+  reclassification:
+    twi:  # topographic wetness index (dimensionless, 30 m grid)
+      - {range: [0, 8], score: 1}
+      - {range: [8, 9.5], score: 2}
+      - {range: [9.5, 11], score: 3}
+      - {range: [11, 13], score: 4}
+      - {range: [13, 99], score: 5}
+
+    slope:  # degrees
+      - {range: [0, 0.5], score: 5}
+      - {range: [0.5, 1], score: 4}
+      - {range: [1, 2], score: 3}
+      - {range: [2, 5], score: 2}
+      - {range: [5, 90], score: 1}
+
+    elevation:  # metres above sea level
       - {range: [0, 10], score: 5}
       - {range: [10, 25], score: 4}
       - {range: [25, 50], score: 3}
       - {range: [50, 100], score: 2}
       - {range: [100, 9999], score: 1}
 
-    river_distance:  # meters from river network
+    river_distance:  # metres from the stream network
       - {range: [0, 100], score: 5}
       - {range: [100, 250], score: 4}
       - {range: [250, 500], score: 3}
@@ -72,11 +96,20 @@ vulnerability:
     population_density: 0.40
     critical_infrastructure: 0.35
     socioeconomic_index: 0.25
+  infrastructure_radius_m: 2000  # gaussian kernel sigma for facility density
+
+risk:
+  method: "geometric_mean"  # multiplicative | geometric_mean | matrix
+  classification:
+    very_high: 0.8
+    high: 0.6
+    moderate: 0.4
+    low: 0.2
 
 scenarios:
   return_periods: [10, 50, 100, 500]
   rainfall_source: "NOAA Atlas 14"
-  # Scale factors for different return periods (relative to 100-yr)
+  # Hazard scale factors relative to the 100-yr map
   return_period_factors:
     10: 0.65
     50: 0.88
@@ -86,4 +119,4 @@ scenarios:
 output:
   directory: "results"
   formats: ["GeoTIFF", "GeoPackage", "PNG"]
-  dpi: 300
+  dpi: 150

@@ -1,0 +1,60 @@
+##############################################################
+# Healthcare Accessibility and Facility Site Selection Config
+##############################################################
+
+study_area:
+  name: "Fresno, California (synthetic 10 km x 10 km city)"
+  crs: "EPSG:32611"          # UTM zone 11N, metres
+  centre_lonlat: [-119.79, 36.74]
+  extent_m: 10000            # square box side; nodes x spacing below
+
+network:
+  grid_nodes: 40             # n x n grid (40 -> 10 km at 250 m spacing)
+  spacing_m: 250
+  seed: 42
+  removal_fraction: 0.08     # random gaps in the residential grid
+  n_bridges: 3               # river crossings
+  speed_kph:                 # free-flow speed per road class
+    residential: 30
+    secondary: 50
+    primary: 65
+    motorway: 100
+  junction_delay_s:          # added per segment to mimic stops and signals
+    residential: 25
+    secondary: 18
+    primary: 12
+    motorway: 0
+
+demand:
+  block_size_m: 500          # census-block-like squares (20 x 20 blocks)
+  density_per_km2: 5000      # mean density -> about 500 k residents
+  population_col: "population"
+
+facilities:
+  n_hospitals: 5
+  beds_range: [120, 600]
+  supply_col: "beds"
+  new_site_beds: 200         # assumed capacity of a proposed site
+
+analysis:
+  threshold_min: 15          # catchment size d0 for 2SFCA and coverage
+  decay: "gaussian"          # "gaussian" or "none"
+  isochrone_breaks_min: [5, 10, 15, 20, 30]
+  underserved_bottom_quantile: 0.2
+  k_new_sites: 2
+  candidate_every_nth_node: 4
+  candidate_min_dist_m: 1000
+
+# Real-data inputs (replace the synthetic layers when running on real data)
+real_data:
+  osm_place: "Fresno, California, USA"   # OSMnx graph_from_place
+  osm_network_type: "drive"
+  hospitals: "data/hifld_hospitals.gpkg" # HIFLD Hospitals (points, BEDS field)
+  blocks: "data/acs_block_groups.gpkg"   # Census ACS 5-year block groups
+  svi: "data/cdc_svi_tracts.gpkg"        # CDC/ATSDR Social Vulnerability Index
+
+output:
+  directory: "results/demo"
+  figures: "docs/figures"
+  web_map: "docs/map.html"
+  dpi: 150

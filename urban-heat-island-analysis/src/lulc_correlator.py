@@ -38,6 +38,25 @@ NLCD_CLASSES = {
     95: "Emergent Herbaceous Wetlands",
 }
 
+# Official NLCD legend colours (used by figures and the Folium map)
+NLCD_COLORS = {
+    11: "#466b9f",
+    21: "#dec5c5",
+    22: "#d99282",
+    23: "#eb0000",
+    24: "#ab0000",
+    31: "#b3ac9f",
+    41: "#68ab5f",
+    42: "#1c5f2c",
+    43: "#b5c58f",
+    52: "#ccb879",
+    71: "#dfdfc2",
+    81: "#dcd939",
+    82: "#ab6c28",
+    90: "#b8d9eb",
+    95: "#6c9fb8",
+}
+
 
 class LULCCorrelator:
     """
@@ -149,7 +168,12 @@ class LULCCorrelator:
                 "p10_lst": round(float(np.percentile(class_lst, 10)), 2),
             })
 
-        df = pd.DataFrame(records).sort_values("mean_lst", ascending=False)
+        columns = [
+            "lulc_code", "lulc_name", "pixel_count", "mean_lst", "median_lst",
+            "std_lst", "max_lst", "min_lst", "p90_lst", "p10_lst",
+        ]
+        df = pd.DataFrame(records, columns=columns)
+        df = df.sort_values("mean_lst", ascending=False).reset_index(drop=True)
         logger.info(f"LST statistics computed for {len(df)} LULC classes")
         return df
 
@@ -191,11 +215,18 @@ class LULCCorrelator:
             lst_valid = lst_valid[indices]
             imp_valid = imp_valid[indices]
 
+        if len(lst_valid) < 3 or np.std(imp_valid) == 0:
+            raise ValueError(
+                "Need at least 3 valid pixels with varying imperviousness "
+                "to compute the LST-impervious correlation"
+            )
+
         # Pearson correlation
         r, p_value = sp_stats.pearsonr(imp_valid, lst_valid)
 
         # Linear regression
-        slope, intercept, _, _, std_err = sp_stats.linregress(imp_valid, lst_valid)
+        fit = sp_stats.linregress(imp_valid, lst_valid)
+        slope, intercept, std_err = fit.slope, fit.intercept, fit.stderr
 
         result = {
             "pearson_r": round(float(r), 4),
