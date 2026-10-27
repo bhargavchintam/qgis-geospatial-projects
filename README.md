@@ -82,6 +82,7 @@ qgis-geospatial-projects/
 ├── README.md                     this file
 ├── index.html                    portfolio landing page (GitHub Pages)
 ├── DEPLOYMENT.md                 how to publish Pages and the Streamlit apps
+├── CONTRIBUTING.md               how to run the tests and add a new project
 ├── .github/workflows/ci.yml      runs every project's tests and demo
 ├── urban-heat-island-analysis/
 ├── flood-risk-assessment/
@@ -104,6 +105,10 @@ qgis-geospatial-projects/
 Bhargav Chintam. Applied machine learning and data engineering background (about six years across genomics, clinical analytics, telecom and enterprise data), M.S. in Computer Science. I build these projects to apply that experience to spatial problems with open data and open tools.
 
 GitHub: https://github.com/bhargavchintam
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the tests and how to add a new pipeline.
 
 ## License
 
