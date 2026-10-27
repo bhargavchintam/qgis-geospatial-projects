@@ -62,9 +62,7 @@ Free-tier apps sleep after inactivity and wake up in about 30 seconds on the fir
 
 ## 4. GitHub profile README
 
-1. Create a new public repo named exactly `bhargavchintam` (same as your username).
-2. Add a `README.md` with the contents of `PROFILE_README.md` from this repo.
-3. It shows on https://github.com/bhargavchintam automatically.
+Status: done. The profile README lives in its own repo, [bhargavchintam/bhargavchintam](https://github.com/bhargavchintam/bhargavchintam), and shows on https://github.com/bhargavchintam automatically. Edit it there, not in this repo.
 
 ## 5. What to put on a resume or application form
 
