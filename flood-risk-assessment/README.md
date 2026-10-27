@@ -16,7 +16,7 @@ Built for: county emergency managers, floodplain planners and GIS analysts who n
 ## Try it
 
 - Interactive map (no install): https://bhargavchintam.github.io/qgis-geospatial-projects/flood-risk-assessment/docs/map.html
-- Streamlit app: `streamlit run app.py`  (live link placeholder: https://flood-risk-assessment.streamlit.app, fill in after deploy)
+- Streamlit app: `streamlit run app.py` (runs on your machine; there is no hosted version yet)
 - One-command demo:
   ```bash
   pip install -r requirements.txt

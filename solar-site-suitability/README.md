@@ -16,7 +16,7 @@ Built for: renewable energy developers, utility planners and GIS analysts doing 
 ## Try it
 
 - Interactive map (no install): https://bhargavchintam.github.io/qgis-geospatial-projects/solar-site-suitability/docs/map.html
-- Streamlit app: `streamlit run app.py`  (live link placeholder: https://solar-site-suitability.streamlit.app, fill in after deploy)
+- Streamlit app: `streamlit run app.py` (runs on your machine; there is no hosted version yet)
 - One-command demo:
   ```bash
   pip install -r requirements.txt

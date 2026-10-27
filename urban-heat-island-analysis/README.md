@@ -16,7 +16,7 @@ Built for: city planners, sustainability teams and GIS analysts who need to deci
 ## Try it
 
 - Interactive map (no install): https://bhargavchintam.github.io/qgis-geospatial-projects/urban-heat-island-analysis/docs/map.html
-- Streamlit app: `streamlit run app.py`  (live link placeholder: https://urban-heat-island-analysis.streamlit.app, fill in after deploy)
+- Streamlit app: `streamlit run app.py` (runs on your machine; there is no hosted version yet)
 - One-command demo:
   ```bash
   pip install -r requirements.txt

@@ -16,6 +16,8 @@ The CI workflow (`.github/workflows/ci.yml`) starts on push. It installs each pr
 
 ## 2. Turn on GitHub Pages (portfolio site + interactive maps)
 
+Status: done. Pages now serves the `main` branch from the root folder. The steps are kept here for reference.
+
 1. Open the repo on GitHub > Settings > Pages.
 2. Under "Build and deployment" choose Source: **Deploy from a branch**.
 3. Branch: **main**, folder: **/ (root)**. Save.
@@ -52,11 +54,9 @@ Streamlit Community Cloud is free for public repos.
 
 Streamlit Cloud reads the `requirements.txt` in the same folder as the app file (each project has one), and falls back to the root `requirements.txt`. No secrets or API keys are needed.
 
-If a subdomain is already taken, pick another (for example `bhargav-flood-risk`) and then update that link in three places: the project README "Try it" section, the `index.html` card button, and the root README if you add it there. Search for `streamlit.app` to find every placeholder:
+If a subdomain is already taken, pick another (for example `bhargav-flood-risk`). Note that `urban-heat-island-analysis` and `flood-risk-assessment` are already used by other people's apps, so those two need new names.
 
-```bash
-grep -rn "streamlit.app" --include=*.md --include=*.html .
-```
+The READMEs and `index.html` do not link to any hosted app yet. After an app is live, add its link in three places: the project README "Try it" section (it says "there is no hosted version yet" today), the "Dashboard code" button on that project's card in `index.html`, and the root README if you want it there.
 
 Free-tier apps sleep after inactivity and wake up in about 30 seconds on the first visit. That is fine for a portfolio; mention it in interviews if someone clicks a cold link.
 
